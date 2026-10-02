@@ -1,0 +1,16 @@
+# Secrets -- never commit real Covidence credentials
+.env
+
+# Python virtual environments
+venv/
+.venv/
+path/
+env/
+__pycache__/
+*.pyc
+
+# Runtime logs (PMIDs + decisions only, but regenerated each run -- no need to version)
+covidence_apply.log
+
+# OS cruft
+.DS_Store
