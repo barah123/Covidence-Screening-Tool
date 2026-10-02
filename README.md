@@ -1,4 +1,4 @@
-# Covidence Screening Automation
+<img src="assets/readme-header.png" alt="Covidence Screening Automation — apply screening decisions, one study at a time" width="600">
 
 Applies pre-computed title/abstract screening decisions to a [Covidence](https://www.covidence.org/)
 systematic-review project, one study at a time, via browser automation (Playwright).
@@ -315,3 +315,22 @@ Any non-zero count on either line means something needs to be screened or reconc
 | `pmid` | PubMed ID of the record |
 | `decision` | One of `Include`, `Exclude`, `Maybe` |
 | `justification` | One-sentence reason for the decision |
+
+---
+
+## Branding assets
+
+`assets/` contains the project's icon set:
+
+| File | Size | Used for |
+|---|---|---|
+| `readme-header.png` | 1200×400 | The header image at the top of this README. |
+| `icon.png` | 512×512 | Square icon/favicon, for reuse wherever a small square mark is needed. |
+| `social-preview.png` | 1280×640 | GitHub's link-unfurl / social-media preview image. |
+
+GitHub doesn't let a repo set its own social preview image via a file in the repo or via
+git push — it has to be uploaded through the web UI:
+
+1. Go to the repo's **Settings → General**.
+2. Scroll to **Social preview**.
+3. Click **Edit**, upload `assets/social-preview.png`, and save.
