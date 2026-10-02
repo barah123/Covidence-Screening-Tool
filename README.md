@@ -1,7 +1,7 @@
 <img src="assets/readme-header.png"
      alt="Covidence Screening Automation — apply screening decisions, one study at a time"
-     width="600"
-     style="display: block; margin: 0 auto;">
+     width="700"
+     style="display: block; margin: 1 auto;">
 
 Applies pre-computed title/abstract screening decisions to a [Covidence](https://www.covidence.org/)
 systematic-review project, one study at a time, via browser automation (Playwright).
