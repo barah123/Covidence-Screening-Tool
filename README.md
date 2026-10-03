@@ -75,7 +75,7 @@ and fixed along the way, so the process is reproducible and the failure modes ar
 ---
 
 ## Setup
-
+cd into your working directory
 ```bash
 # 1. (recommended) create and activate a virtual environment
 python3 -m venv .venv
@@ -85,15 +85,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. download the Chromium browser Playwright drives (one-time, ~100-200MB)
+pip install playwright
 playwright install chromium
 
 # 4. create your local credentials file
-cp .env.example .env
+cp .env.example (rename to .env)
 ```
 
 Open `.env` in a text editor and fill in your **own** real Covidence login:
 
 ```
+#covidence password and username
 COVID_ID=you@example.com
 COVID_PASSWORD=your_real_covidence_password
 ```
@@ -140,6 +142,7 @@ several hours; let it run.
 To run without a visible browser window:
 
 ```bash
+#update the script to have your file path: 
 python3 apply_screening_decisions.py --headless
 ```
 
