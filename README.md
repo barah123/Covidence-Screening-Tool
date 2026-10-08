@@ -3,8 +3,10 @@
      width="700"
      style="display: block; margin: 1 auto;">
 
-Applies pre-computed title/abstract screening decisions to a [Covidence](https://www.covidence.org/)
-systematic-review project, one study at a time, via browser automation (Playwright).
+Automates two stages of a [Covidence](https://www.covidence.org/) systematic-review project,
+one study at a time, via browser automation (Playwright): applying pre-computed title/abstract
+screening decisions, and retrieving + attaching full-text PDFs for studies that passed
+title/abstract screening.
 
 **Context:** built for a systematic review on breastfeeding vs. formula feeding and the
 infant gut microbiome (PROSPERO CRD420261485879, Covidence review 818465,
@@ -13,6 +15,10 @@ were produced by reading each record's full title and abstract against this revi
 PECO eligibility criteria — not by an LLM API call at vote-time, and not by guessing. This
 repo captures the review step and the automation that applies it, including the bugs found
 and fixed along the way, so the process is reproducible and the failure modes are documented.
+
+This README covers both stages: **title/abstract screening** (below) and **full-text
+retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-and-upload)
+further down).
 
 ---
 
@@ -23,9 +29,14 @@ and fixed along the way, so the process is reproducible and the failure modes ar
 | `apply_screening_decisions.py` | Main script. Logs into Covidence, reads the screening queue, and casts the correct vote (Include → Yes, Exclude → No, Maybe → Maybe) for each study, one at a time. |
 | `debug_queue.py` | Read-only diagnostic. Logs in, opens the queue, and prints the raw text/HTML of the first few study cards — casts **no votes**. Use this if Covidence changes its page layout and the main script starts misbehaving again (see [Known issues](#known-issues--troubleshooting-history) below). |
 | `search-results-2026-10/screening_decisions.csv` | The screening results: one row per PMID, with columns `pmid,decision,justification`. |
+| `retrieve_remaining_full_texts.py` | Finds free copies of missing full texts via Unpaywall + Crossref. See [Full-text retrieval and upload](#full-text-retrieval-and-upload). |
+| `download_blocked_oa_pdfs.py` | Retries open-access PDFs that a publisher's bot-check blocked, via a real browser. |
+| `upload_full_texts.py` | Attaches locally-held full-text PDFs to the matching Covidence record. |
+| `full-text/retrieval_status_<date>.csv` | Per-record status: already available locally vs. still needs retrieving. |
+| `full-text/remaining_retrieval_categorized_<date>.csv` | Still-missing records, categorized by retrieval route. |
 | `requirements.txt` | Python dependencies. |
 | `.env.example` | Template for your local credentials file. |
-| `.gitignore` | Keeps `.env`, virtual environments, and logs out of version control. |
+| `.gitignore` | Keeps `.env`, virtual environments, logs, and downloaded PDFs out of version control. |
 
 ---
 
@@ -340,3 +351,301 @@ git push — it has to be uploaded through the web UI:
 1. Go to the repo's **Settings → General**.
 2. Scroll to **Social preview**.
 3. Click **Edit**, upload `assets/social-preview.png`, and save.
+
+---
+
+## Full-text retrieval and upload
+
+Three scripts that pick up where `apply_screening_decisions.py` leaves off: once a study is
+voted **Include** at title/abstract, Covidence moves it into **Full Text Review**, where it
+needs an actual PDF attached before a human can screen it at full text. This part of the
+toolkit finds those PDFs (legally, via open-access lookups) and attaches them to the right
+Covidence record, the same "automate the repetitive part, never fabricate the judgment part"
+approach as the title/abstract tool.
+
+**Context:** same review as the rest of this repo (Covidence review 818465,
+*"microbiome_methodologies"*). As of the run this was built for, 235 studies had reached
+Full Text Review and 148 of them had no PDF attached yet in Covidence.
+
+### The pipeline, in order
+
+```
+1. retrieve_remaining_full_texts.py   -- find free copies via Unpaywall + Crossref
+2. download_blocked_oa_pdfs.py        -- retry the ones a publisher's bot-check blocked
+3. upload_full_texts.py               -- attach the downloaded PDFs to the right Covidence record
+```
+
+Each stage writes a CSV the next stage reads, so they can be re-run independently once a
+PDF set has been built up — you don't have to re-run the whole pipeline to pick up a new
+batch of manually-sourced PDFs; see [Re-running with a different batch](#re-running-with-a-different-batch)
+below.
+
+### Files in this stage
+
+| File | Purpose |
+|---|---|
+| `retrieve_remaining_full_texts.py` | For every study missing full text: resolves a DOI if one isn't already known (via a Crossref bibliographic title search), looks the DOI up in [Unpaywall](https://unpaywall.org/), and downloads the PDF if Unpaywall has a direct link. Categorizes everything else (no direct link, not open access, no DOI at all) into a report CSV for manual follow-up. |
+| `download_blocked_oa_pdfs.py` | Retries the subset that Unpaywall confirmed as open access but whose direct download got an HTTP 403/429 from the publisher (see [Known issues](#known-issues--troubleshooting-history-full-text-pipeline)) — using a real Playwright-driven Chromium browser instead of a raw HTTP request. |
+| `upload_full_texts.py` | Logs into Covidence, searches by title for each record with a locally-held PDF, and uploads it through the "Upload full text" dialog. |
+| `full-text/retrieval_status_<date>.csv` | Per-record status after the local-file cross-check: `have_locally_needs_upload`, `still_needs_retrieval`, or `still_needs_retrieval_no_doi`. Input to `upload_full_texts.py`. |
+| `full-text/remaining_retrieval_categorized_<date>.csv` | Output of `retrieve_remaining_full_texts.py` — one row per still-missing record, categorized by retrieval route (see [CSV schemas](#csv-schemas)). |
+
+PDFs themselves are **not** committed to this repo (see [What's not here](#whats-not-here)).
+
+### Prerequisites (full-text stage)
+
+Same as [Prerequisites](#prerequisites) above: Python 3, `pip install -r requirements.txt`,
+`playwright install chromium`, and a `.env` with real Covidence credentials. No additional
+dependencies — `retrieve_remaining_full_texts.py` uses only the standard library (`urllib`,
+`json`, `csv`) for its Unpaywall/Crossref calls.
+
+### Usage (full-text stage)
+
+#### 1. Find what's retrievable
+
+```bash
+python3 retrieve_remaining_full_texts.py
+```
+
+Reads `full-text/retrieval_status_<date>.csv` for rows still needing a PDF, resolves a DOI
+via Crossref for any that don't have one, checks Unpaywall, and downloads anything with a
+direct PDF link into `full-text/open-access-<date>/`. Prints a category breakdown at the
+end — see [CSV schemas](#csv-schemas) for what each category means.
+
+#### 2. Retry the bot-blocked ones
+
+```bash
+python3 download_blocked_oa_pdfs.py
+```
+
+Takes the `open_access_pdf_link_failed` rows from step 1's report and retries each one
+through a real headless Chromium session instead of a raw HTTP request. **Re-run it 2–3
+times** if the count doesn't converge the first time — Playwright's download-event capture
+has a race condition on slower redirect chains (increase the `expect_download(timeout=...)`
+value in the script if a specific publisher consistently needs longer; see
+[Known issues](#known-issues--troubleshooting-history-full-text-pipeline)).
+
+#### 3. Upload to Covidence — test first
+
+```bash
+python3 upload_full_texts.py --csv full-text/retrieval_status_<date>.csv --limit 1 --headless
+```
+
+Then check that one record in the Covidence UI before trusting it with the rest.
+
+#### 4. Upload to Covidence — full run
+
+```bash
+python3 upload_full_texts.py --csv full-text/retrieval_status_<date>.csv --headless
+```
+
+Expect roughly 25–40 seconds per record (title search, open, upload, confirm). Drop
+`--headless` to watch it work.
+
+#### Re-running with a different batch
+
+`upload_full_texts.py` takes `--csv` so it can target any status CSV with
+`have_locally_needs_upload` rows — not just the original one. Build a fresh batch file
+(same five columns as the schema below) whenever a new set of PDFs is ready, and point the
+script at it:
+
+```bash
+python3 upload_full_texts.py --csv full-text/retrieval_status_<date>_batch2.csv --headless
+```
+
+This is also how manually-sourced PDFs get uploaded — e.g. the "landing page only" and
+truly-closed records from step 1's report, retrieved by hand from GWU institutional access
+or a publisher's page directly: save the PDF, add a row for it to a batch CSV, run the
+script.
+
+### How it works (full-text stage)
+
+#### `retrieve_remaining_full_texts.py`
+
+For each still-missing record:
+
+1. If there's no DOI yet, search Crossref's bibliographic-match endpoint
+   (`api.crossref.org/works?query.bibliographic=<title>`) and accept the top hit only if its
+   title closely matches the target (a 60-character prefix-overlap check) — this guards
+   against confidently attaching the wrong DOI to a title that happens to rank first.
+2. Query Unpaywall (`api.unpaywall.org/v2/<doi>?email=...`) for `best_oa_location`.
+3. If there's a direct `url_for_pdf`, download it and **validate the first four bytes are
+   `%PDF`** before saving — some "PDF" links actually serve an HTML interstitial, and saving
+   that without checking would silently corrupt the full-text record with garbage.
+4. Categorize everything else by what Unpaywall returned (OA-but-landing-page-only,
+   confirmed-not-OA, or lookup failure) into the report CSV.
+
+#### `download_blocked_oa_pdfs.py`
+
+Same idea as step 3 above, but via `page.goto()` in a real Chromium browser (not raw
+`urllib`) — a genuine browser TLS/HTTP fingerprint gets past simple bot-score checks that a
+bare HTTP client doesn't. Two response shapes are handled:
+
+- A normal page loads: check it's actually a PDF (`resp.body()` starts with `%PDF`), not an
+  HTML block page.
+- Chrome itself intercepts the response as a **file download** (common for publisher
+  "direct PDF" links): this makes `page.goto()` raise rather than return normally, so the
+  download has to be caught via `page.expect_download()` *around* the `goto()` call, with
+  the resulting `Download` object saved via `.save_as()`.
+
+#### `upload_full_texts.py`
+
+1. Loads every `have_locally_needs_upload` row from the given CSV.
+2. For each: searches Covidence by title
+   (`/review_studies/search?search%5Bterm%5D=<title>`).
+3. Opens the result — see [search page behavior](#1-two-different-pages-depending-on-result-count)
+   below for why this isn't as simple as "click the first link."
+4. Dismisses the "Access your library's full texts" (LibKey) promo modal if Covidence shows
+   it on that record.
+5. Clicks "Upload full text", attaches the local PDF via `set_input_files`, waits for it to
+   register, clicks "Done".
+
+### Known issues / troubleshooting history (full-text pipeline)
+
+Same philosophy as the [main Known issues section](#known-issues--troubleshooting-history)
+above: these were found by actually looking at what the live page returned, not guessed at.
+If Covidence changes its markup and this starts misbehaving, repeat the same process — dump
+the real page content/URL and compare against what the code assumes, rather than patching
+blindly.
+
+#### 1. Two different pages depending on result count
+
+**Symptom:** every multi-result title search was logging `NO_RESULTS`, even for titles that
+were visibly present in Covidence when searched by hand.
+
+**Root cause:** Covidence's search behaves differently depending on how many studies match:
+
+- **Exactly one match:** the search skips straight to that study's own page — the URL
+  becomes `.../review_studies/select?filter=all&id=NNNN`.
+- **Zero or multiple matches:** it lands on `.../review_studies/search?...`, a results-list
+  page where each result is a plain `<a href="/reviews/818465/review_studies/{id}">` — note,
+  critically, **no `select?` in that href**. That query string only appears *after* you
+  click through to a specific study.
+
+The original selector (`main a[href*="/review_studies/select?"]`) could only ever match the
+single-result auto-redirect case. On every multi-result page it matched zero elements,
+which the code read as "no results" — when in reality the right study was usually sitting
+right there in the list, just under a different link shape.
+
+**The fix:** check `page.url` after navigating. If it already contains `/review_studies/select`,
+the single-match redirect happened — done. Otherwise, scan the result links
+(`main a[href*="/review_studies/"]`) for one whose text contains the *exact* target title
+(normalized: lowercased, whitespace-collapsed) rather than assuming the first result is
+correct — multi-result pages are often full of loosely related matches (shared common words
+like "infant", "microbiome", "gut"), and the real target is not reliably first.
+
+#### 2. Covidence's search has a hard 150-character limit
+
+**Symptom:** a handful of titles consistently returned zero results, even after fix #1 —
+verified by hand in the Covidence UI that the exact same title string, searched directly,
+returned real results.
+
+**Root cause:** Covidence silently truncates/rejects queries over 150 characters, showing
+`"Search is limited to 150 characters. Please shorten your query for more accurate
+results."` on the results page — easy to miss if you're only checking the result count, not
+reading the page banner.
+
+**The fix:** the search *query* is truncated to 150 characters at a word boundary, but the
+**full, untruncated title** is still what gets exact-matched against the result list — a
+shortened query only needs to surface the right record among the results, it doesn't need
+to uniquely identify it by itself.
+
+#### 3. A same-paper, same-authors record duplicated in Covidence
+
+**Symptom:** one title (a prebiotics/probiotics starter-formula RCT) kept coming back
+`ambiguous` no matter what — two results, identical title text, so no exact-match logic
+could tell them apart.
+
+**Root cause:** not a script bug — Covidence genuinely had two separate study entries for
+the same paper (`#9839 "Radke 2016"` and `#1720 "Radke 2017"`), most likely an epub-vs-print
+publication-year mismatch between two source databases that Covidence's own deduplication
+didn't catch.
+
+**Resolution:** uploaded the same PDF to both entries (both genuinely need one, regardless
+of the duplicate), and flagged the pair for a reviewer to merge via Covidence's own
+"Duplicate" action — **this is a review-integrity decision a script shouldn't make
+unilaterally.** If `upload_full_texts.py` logs `ambiguous` for a search that returns results
+with genuinely identical titles, check for this before assuming it's a script bug.
+
+#### 4. Publisher bot-protection blocks raw HTTP downloads (Akamai WAF)
+
+**Symptom:** `retrieve_remaining_full_texts.py` reported `open_access_pdf_link_failed` for
+roughly a third of all Unpaywall-confirmed-OA links — all `HTTP 403 Forbidden`, even though
+Unpaywall had independently confirmed each one was freely downloadable.
+
+**Root cause:** the response body for the 403s was an Akamai edge-server block page
+(`errors.edgesuite.net`), not a real access-denial from the publisher. Several publishers
+(JAMA, MDPI, ASM, Taylor & Francis, Wiley, and others) sit behind bot-protection that blocks
+non-browser HTTP clients — even for content that is genuinely, legitimately open access.
+
+**The fix (partial):** re-fetching through a real Playwright Chromium browser
+(`download_blocked_oa_pdfs.py`) — a genuine browser TLS/HTTP fingerprint gets past the
+simpler checks. This recovered roughly 40% of the blocked set. The remainder resisted even
+a real headless browser, almost certainly because the WAF additionally checks for
+automation markers (e.g. `navigator.webdriver`). **Deliberately not pursued further** —
+getting past that would mean stealth/anti-detection techniques (fingerprint spoofing,
+disabling automation flags), which starts to cross from "fetch something I have a legitimate
+right to read" into "evade a specific protection mechanism," even for content that's
+legitimately free. Those remaining records are better opened in an actual logged-in
+browser by a human — faster and more appropriate than engineering around a WAF.
+
+#### 5. `page.goto()` raises instead of returning when Chrome intercepts a download
+
+**Symptom:** even after the WAF-bypass fix above, a meaningful chunk of "blocked" records
+turned out not to be blocked at all — Chrome was successfully starting the file download,
+but the script logged every one of them as `failed: Page.goto: Download is starting`.
+
+**Root cause:** several publishers' "direct PDF" links (`journals.asm.org`,
+`tandfonline.com`, `onlinelibrary.wiley.com`, `cell.com`, `jacionline.org`, `cmaj.ca`, and
+others) respond in a way that makes Chrome treat the navigation as a **file download**
+rather than a page load. Playwright surfaces this by raising an exception out of
+`page.goto()` — the original code treated any exception there as a genuine failure.
+
+**The fix:** wrap the `goto()` call in `page.expect_download(timeout=...)` *before* calling
+it, catch the resulting `Download` object, and save it via `.save_as()` — then validate the
+saved file's first four bytes are `%PDF` before trusting it, same as every other download
+path in this toolkit. A short timeout (5s) missed some slower redirect chains; 20s cleared
+nearly all of them, with one or two needing a second run to land (see
+[step 2 above](#2-retry-the-bot-blocked-ones)). If a specific publisher's downloads are
+consistently still missed at 20s, raise the timeout further rather than assume it's
+genuinely blocked.
+
+### What's not here
+
+The downloaded PDFs themselves (`full-text/open-access-<date>/*.pdf`) are **not** committed
+to this repo. This toolkit documents and automates *how* to legally retrieve and attach
+them — it doesn't redistribute copies of the papers, even the open-access ones. Re-running
+`retrieve_remaining_full_texts.py` + `download_blocked_oa_pdfs.py` against the status CSVs
+regenerates the same files.
+
+### CSV schemas
+
+`full-text/retrieval_status_<date>.csv` — per-record status after cross-checking against
+locally-held files:
+
+| Column | Description |
+|---|---|
+| `status` | `have_locally_needs_upload`, `still_needs_retrieval`, or `still_needs_retrieval_no_doi` |
+| `doi` | Normalized DOI (lowercased, no trailing period), or blank |
+| `title` | Record title |
+| `first_author` | First author surname, if known |
+| `year` | Publication year, if known |
+| `local_pdf_path` | Path to the matching local file (only set when `status` is `have_locally_needs_upload`) |
+
+`full-text/remaining_retrieval_categorized_<date>.csv` — output of
+`retrieve_remaining_full_texts.py`:
+
+| Column | Description |
+|---|---|
+| `title`, `doi` | As above |
+| `doi_resolved_via_crossref` | `True` if the DOI wasn't already known and had to be resolved via a Crossref title search |
+| `category` | `downloaded_open_access`, `open_access_pdf_link_failed`, `open_access_landing_page_only`, `closed_needs_institutional_access_or_ill`, `no_doi_found_needs_manual_lookup`, or `unpaywall_lookup_failed` |
+| `pdf_or_landing_url` | The PDF or landing-page URL Unpaywall returned, if any |
+| `notes` | Error detail for failed categories |
+
+### Security notes (full-text stage)
+
+Same as [Security notes](#security-notes) above: never commit `.env`; the Covidence review
+URL embedded in these scripts is project-specific, not secret; virtual environments and
+runtime logs (`upload_full_texts.log`, `retrieve_remaining_full_texts.log`,
+`download_blocked_oa_pdfs.log`) are excluded from version control.

@@ -11,6 +11,12 @@ __pycache__/
 
 # Runtime logs (PMIDs + decisions only, but regenerated each run -- no need to version)
 covidence_apply.log
+upload_full_texts.log
+retrieve_remaining_full_texts.log
+download_blocked_oa_pdfs.log
+
+# Downloaded full-text PDFs -- retrievable by re-running the pipeline, not redistributed here
+full-text/open-access-*/
 
 # OS cruft
 .DS_Store
