@@ -3,22 +3,25 @@
      width="700"
      style="display: block; margin: 1 auto;">
 
-Automates two stages of a [Covidence](https://www.covidence.org/) systematic-review project,
+Automates three stages of a [Covidence](https://www.covidence.org/) systematic-review project,
 one study at a time, via browser automation (Playwright): applying pre-computed title/abstract
-screening decisions, and retrieving + attaching full-text PDFs for studies that passed
-title/abstract screening.
+screening decisions, retrieving + attaching full-text PDFs for studies that passed
+title/abstract screening, and casting the full-text Include/Exclude vote (with its exclusion
+reason) once a study has been read and decided at full text.
 
 **Context:** built for a systematic review on breastfeeding vs. formula feeding and the
 infant gut microbiome (PROSPERO CRD420261485879, Covidence review 818465,
 *"microbiome_methodologies"*). The decisions in `search-results-2026-10/screening_decisions.csv`
-were produced by reading each record's full title and abstract against this review's own
-PECO eligibility criteria — not by an LLM API call at vote-time, and not by guessing. This
-repo captures the review step and the automation that applies it, including the bugs found
-and fixed along the way, so the process is reproducible and the failure modes are documented.
+and `full-text/full_text_screening_decisions_2026-10-09.csv` were produced by reading each
+record's title/abstract or full text against this review's own PECO eligibility criteria —
+not by an LLM API call at vote-time, and not by guessing. This repo captures the review step
+and the automation that applies it, including the bugs found and fixed along the way, so the
+process is reproducible and the failure modes are documented.
 
-This README covers both stages: **title/abstract screening** (below) and **full-text
-retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-and-upload)
-further down).
+This README covers all three stages: **title/abstract screening** (below), **full-text
+retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-and-upload)),
+and **full-text review + voting** (see
+[Full-text review and voting](#full-text-review-and-voting)).
 
 ---
 
@@ -34,6 +37,8 @@ further down).
 | `upload_full_texts.py` | Attaches locally-held full-text PDFs to the matching Covidence record. |
 | `full-text/retrieval_status_<date>.csv` | Per-record status: already available locally vs. still needs retrieving. |
 | `full-text/remaining_retrieval_categorized_<date>.csv` | Still-missing records, categorized by retrieval route. |
+| `vote_fulltext_decisions.py` | Casts the full-text Include/Exclude vote (with exclusion reason) for studies already decided at full text. See [Full-text review and voting](#full-text-review-and-voting). |
+| `full-text/full_text_screening_decisions_2026-10-09.csv` | The full-text screening results: one row per Covidence study number, columns `covidence_number,doi,title,decision,exclusion_reason,justification`. |
 | `requirements.txt` | Python dependencies. |
 | `.env.example` | Template for your local credentials file. |
 | `.gitignore` | Keeps `.env`, virtual environments, logs, and downloaded PDFs out of version control. |
@@ -649,3 +654,232 @@ Same as [Security notes](#security-notes) above: never commit `.env`; the Covide
 URL embedded in these scripts is project-specific, not secret; virtual environments and
 runtime logs (`upload_full_texts.log`, `retrieve_remaining_full_texts.log`,
 `download_blocked_oa_pdfs.log`) are excluded from version control.
+
+---
+
+## Full-text review and voting
+
+Picks up where the retrieval/upload stage leaves off: once a study has a PDF attached in
+Covidence, a human (here: careful reading against this review's own exclusion criteria)
+decides Include or Exclude at full text — but *casting* that decision as an actual vote in
+Covidence's UI is still a repetitive, one-record-at-a-time task. `vote_fulltext_decisions.py`
+automates that casting step; it never decides eligibility itself.
+
+**Context:** same review (818465, *"microbiome_methodologies"*). The 10 exclusion-reason
+categories it selects from are the ones already configured in Covidence's own "Full Text
+Exclusion Reasons" list for this review — the script matches by exact text, it doesn't invent
+reasons.
+
+### Files in this stage
+
+| File | Purpose |
+|---|---|
+| `vote_fulltext_decisions.py` | Main script. Logs in, finds each decided record by title (falling back to an exact covidence-number match when title alone is ambiguous — see [Known issues #3](#3-duplicate-title-record-pairs-cant-be-disambiguated-by-title-alone)), and casts Include, or Exclude with the matching reason. |
+| `full-text/full_text_screening_decisions_2026-10-09.csv` | The decisions: one row per Covidence study number. Grows over time as more full-text-stage records get decided — the script always reads however many rows the file currently has, nothing is hardcoded. |
+
+### Prerequisites (full-text review stage)
+
+Same as [Prerequisites](#prerequisites) above, plus: Covidence voting permission specifically
+at the **Full Text Review** stage (distinct from title/abstract voting permission).
+
+### Usage (full-text review stage)
+
+#### 1. Dry run first — zero risk, clicks nothing
+
+```bash
+python3 vote_fulltext_decisions.py --dry-run
+```
+
+Walks every row, confirms each resolves to the expected covidence_number, and logs anything
+that doesn't (`no_results` / `ambiguous` / `cn_mismatch`) without touching the review. These
+get skipped, not voted — safe to leave a handful for manual follow-up.
+
+#### 2. One real Include vote
+
+```bash
+python3 vote_fulltext_decisions.py --limit 1
+```
+
+Check that record in Covidence afterward.
+
+#### 3. One real Exclude vote — proves the exclusion-reason picker
+
+```bash
+python3 vote_fulltext_decisions.py --limit 1 --only-exclude
+```
+
+Check the exclusion reason landed correctly — see
+[Known issues #2](#2-the-exclusion-reason-picker-is-a-native-select-not-a-clickable-list)
+below for why this path needed its own fix.
+
+#### 4. Full run
+
+```bash
+python3 vote_fulltext_decisions.py
+```
+
+Stops itself on anything it isn't sure about rather than guessing. If it stops partway,
+re-run the same command — it re-searches fresh every time, not by position, so already-cast
+votes are detected and skipped rather than re-cast (see
+[Known issues #4](#4-already-voted-detection-has-to-happen-before-every-click-not-just-on-failure)).
+
+### Multi-reviewer usage
+
+Covidence tracks each reviewer's vote on a study separately. A second reviewer can run this
+same script against the same decisions CSV to cast *their own* independent vote — it does not
+overwrite or conflict with a first reviewer's vote, as long as the decisions agree.
+
+```bash
+python3 vote_fulltext_decisions.py --env-file .env.alaa --dry-run
+python3 vote_fulltext_decisions.py --env-file .env.alaa --limit 1
+python3 vote_fulltext_decisions.py --env-file .env.alaa
+```
+
+Create `.env.alaa` (or any name) the same way as `.env`, with that reviewer's own Covidence
+login — never edit someone else's `.env` in a shared checkout; a stale credentials file
+silently running under the wrong identity is exactly the kind of mistake this project has
+already made once before (misattributed full-text uploads from an `.env` that pointed at the
+wrong account for a period).
+
+### How it works (full-text review stage)
+
+For each row in the decisions CSV:
+
+1. Search Covidence by title. Two outcomes:
+   - Exactly one match: Covidence redirects straight to that study's page.
+   - Multiple (or zero) matches: lands on a results list; scan it for a link whose **exact
+     covidence_number** (`#1720`, `#9839`, etc. — the same number already in the decisions
+     CSV) matches, falling back to exact-title matching only if the number isn't found.
+2. Confirm the landed study's own covidence_number matches what was expected — if not, stop
+   and flag it (`cn_mismatch`) rather than voting on the wrong record.
+3. Check whether *this reviewer* has already voted this record, and what they voted. Matches
+   the CSV's decision → skip, logged, no click. Differs → stop, flagged for a human.
+4. Not yet voted: click **Include**, or click **Exclude** and then select the matching
+   exclusion reason from the picker.
+5. Save a screenshot + the page's full text to `vote_fulltext_logs/` after every real vote —
+   so a wrong vote is always independently checkable afterward, not just trusted because the
+   script logged success.
+
+### Known issues / troubleshooting history (full-text review pipeline)
+
+Same philosophy as the other stages' Known issues sections: these were found by looking at
+what the live page actually returned (via saved diagnostics, or deliberately reading the
+accessibility tree), not guessed at or patched blindly.
+
+#### 1. A CSS substring selector silently double-counted every single match as "ambiguous"
+
+**Symptom:** a full dry-run rehearsal reported dozens of `ambiguous -- landed on select page
+but card count is 2 (expected 1)` results — including for titles independently confirmed, by
+hand, to have exactly one match in Covidence.
+
+**Root cause:** the card selector used an attribute *substring* match
+(`[class*="StudyListItem-module__card"]`), which also matches the card's own nested child
+wrapper, `...StudyListItem-module__cardContent` — whose class name happens to **start with**
+the same substring. A genuinely single-match page was rendering one real card plus its own
+child element, both satisfying the substring selector, so `len(cards) == 2` on every single
+case, not just the real ambiguous ones.
+
+**The fix:** switched to an exact class-*token* match (CSS `~=` rather than `*=`):
+`[class~="webpack-pages-StudyList-StudyListItem-StudyListItem-module__card"]`. Verified
+directly afterward: a known single-match page now correctly reports 1 card, and the
+multi-result queue page correctly reports its real count (25, not 50).
+
+#### 2. The exclusion-reason picker is a native `<select>`, not a clickable list
+
+**Symptom:** the very first real Exclude vote failed with `Locator.click: Element is not
+visible`, pointing at an `<option>` element whose text matched the right exclusion reason —
+the code had *found* the right option, but couldn't click it.
+
+**Root cause:** Covidence's reason picker renders as a plain HTML `<select>` (each
+`<option>`'s value **and** visible text is the full criterion string — short label plus its
+parenthetical description). `<option>` elements inside a `<select>` aren't independently
+clickable the way a button or a styled dropdown item is.
+
+**The fix:** find the `<select>` containing a matching `<option>` and call Playwright's
+`select_option(label=..., force=True)` on the **select**, not `.click()` on the option.
+Confirmed against a real vote: the log recorded `select_option matched 'No
+breastfed-vs-formula-fed comparison (feeding mode not rep...'` and the exclusion reason showed
+correctly in Covidence afterward.
+
+#### 3. Duplicate-title record pairs can't be disambiguated by title alone
+
+**Symptom:** a handful of titles consistently came back `ambiguous -- multiple
+normalized-title matches`, even on retry — all for records already known (from the full-text
+retrieval stage's [own duplicate-record issue](#3-a-same-paper-same-authors-record-duplicated-in-covidence))
+to exist twice in Covidence under two different study numbers with identical or
+near-identical titles (e.g. `#1720`/`#9839`).
+
+**Root cause:** matching on normalized title text can't tell two identically-titled records
+apart — there's no single "right" link to click by title alone.
+
+**The fix:** each result-list link's text already starts with its own `#<number> — Name Year`,
+exactly like a single-record page does. Since the target covidence_number is already known
+(it's the row being processed), matching on that number directly — rather than on title text —
+resolves the pair cleanly. Title-text matching is kept only as a fallback for the (so far
+unseen) case where the expected number genuinely isn't present in a given result page.
+
+#### 4. Already-voted detection has to happen *before* every click, not just on failure
+
+**Symptom:** re-running the full batch (e.g. after fixing bug #1 or #2) made a row that was
+already correctly voted in an earlier run fail with "could not find a UI element matching
+reason... after clicking Exclude."
+
+**Root cause:** clicking "Exclude" again on a record that's *already* voted Exclude is a
+no-op from Covidence's point of view (nothing changes, so no fresh reason-picker ever
+appears) — but the button carrying the current vote's own label changes, from plain
+`"Include"`/`"Exclude"` to `"Change vote to include"` (shown when the current vote is
+Exclude) or `"Change vote to exclude"` (shown when it's Include). The original code's
+button-matching logic still found and clicked "Exclude" on the relabeled card, expecting a
+reason picker that was never going to reappear.
+
+**The fix:** before attempting any click, check the card for a `"Change vote to X"` label. If
+found, that tells you the *current* vote (the opposite of whatever "X" is) — compare it
+against the CSV's decision: match → log "already voted, skipping" and move on at zero cost;
+mismatch → stop and flag it (`vote_conflict`) for a human, since overwriting an existing vote —
+possibly cast by a different reviewer — is not a decision a script should make silently. This
+also makes the script naturally safe to re-run after it stops partway through: it re-checks
+every row fresh rather than assuming position in the file means anything.
+
+#### 5. A tight loop fetching link text one element at a time made one row take 15+ minutes
+
+**Symptom:** most rows resolved in under a minute, but a handful took 15–20 minutes each with
+no errors and nothing logged in between — long enough to look like a hang, but the run always
+eventually continued on its own.
+
+**Root cause:** a loosely-matching title (lots of common words like "infant", "gut",
+"microbiome") can pull back dozens-to-hundreds of loosely-related results from Covidence's
+search. The result-scanning loop called `.nth(i).inner_text()` once per result, each a
+separate round-trip to the browser — fine for a handful of results, very slow for a hundred.
+
+**The fix:** `locator.all_inner_texts()` fetches every matching element's text in a single
+batched call instead of N separate ones. Same matching logic, same result — just one
+round-trip instead of up to a hundred.
+
+### What's not here
+
+The converted full-text markdown and the underlying PDFs are **not** committed to this repo,
+same reasoning as the [full-text retrieval stage](#what-not-here) above — this toolkit
+documents and automates the review/voting *process*, it doesn't redistribute the papers
+themselves.
+
+### CSV schema (full-text review stage)
+
+`full-text/full_text_screening_decisions_2026-10-09.csv`:
+
+| Column | Description |
+|---|---|
+| `covidence_number` | The study's own Covidence reference number (e.g. `#1720`), as shown on its card |
+| `doi` | DOI, where known |
+| `title` | Record title |
+| `decision` | `Include` or `Exclude` |
+| `exclusion_reason` | One of the 10 reasons configured in Covidence's own Full Text Exclusion Reasons list, exact text, blank for `Include` rows |
+| `justification` | The specific evidence from the full text supporting the decision |
+
+### Security notes (full-text review stage)
+
+Same as [Security notes](#security-notes) above, plus: when more than one reviewer uses this
+script against the same project checkout, each reviewer's credentials belong in their **own**
+named file (e.g. `.env.alaa`), passed via `--env-file` — never share or overwrite one
+reviewer's `.env` with another's. `vote_fulltext_decisions.log` and `vote_fulltext_logs/`
+(per-vote screenshots) are runtime artifacts excluded from version control, same as the other
+stages' logs.

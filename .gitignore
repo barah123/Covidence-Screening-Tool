@@ -1,5 +1,8 @@
-# Secrets -- never commit real Covidence credentials
+# Secrets -- never commit real Covidence credentials. Each reviewer's credentials
+# file is excluded regardless of name (.env, .env.alaa, .env.<anyone>).
 .env
+.env.*
+!.env.example
 
 # Python virtual environments
 venv/
@@ -14,9 +17,13 @@ covidence_apply.log
 upload_full_texts.log
 retrieve_remaining_full_texts.log
 download_blocked_oa_pdfs.log
+vote_fulltext_decisions.log
 
 # Downloaded full-text PDFs -- retrievable by re-running the pipeline, not redistributed here
 full-text/open-access-*/
+
+# Per-vote screenshots/page-text from the full-text review stage -- local diagnostics, regenerated each run
+vote_fulltext_logs/
 
 # OS cruft
 .DS_Store
