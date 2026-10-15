@@ -3,25 +3,29 @@
      width="700"
      style="display: block; margin: 1 auto;">
 
-Automates three stages of a [Covidence](https://www.covidence.org/) systematic-review project,
-one study at a time, via browser automation (Playwright): applying pre-computed title/abstract
-screening decisions, retrieving + attaching full-text PDFs for studies that passed
-title/abstract screening, and casting the full-text Include/Exclude vote (with its exclusion
-reason) once a study has been read and decided at full text.
+Automates and documents four stages of a [Covidence](https://www.covidence.org/)
+systematic-review project, one study at a time: applying pre-computed title/abstract screening
+decisions, retrieving + attaching full-text PDFs for studies that passed title/abstract
+screening, casting the full-text Include/Exclude vote (with its exclusion reason) once a study
+has been read and decided at full text — all three via browser automation (Playwright) — and
+building the review's Data Extraction and Quality Assessment templates in Covidence itself (a
+one-time UI configuration, documented here as a reproducible spec rather than a script).
 
 **Context:** built for a systematic review on breastfeeding vs. formula feeding and the
 infant gut microbiome (PROSPERO CRD420261485879, Covidence review 818465,
 *"microbiome_methodologies"*). The decisions in `search-results-2026-10/screening_decisions.csv`
 and `full-text/full_text_screening_decisions_2026-10-09.csv` were produced by reading each
 record's title/abstract or full text against this review's own PECO eligibility criteria —
-not by an LLM API call at vote-time, and not by guessing. This repo captures the review step
-and the automation that applies it, including the bugs found and fixed along the way, so the
-process is reproducible and the failure modes are documented.
+not by an LLM API call at vote-time, and not by guessing. This repo captures each review step
+and the automation (or spec, where there's no automation to capture) that applies it, including
+the bugs found and fixed along the way, so the process is reproducible and the failure modes
+are documented.
 
-This README covers all three stages: **title/abstract screening** (below), **full-text
+This README covers all four stages: **title/abstract screening** (below), **full-text
 retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-and-upload)),
-and **full-text review + voting** (see
-[Full-text review and voting](#full-text-review-and-voting)).
+**full-text review + voting** (see
+[Full-text review and voting](#full-text-review-and-voting)), and **extraction template setup**
+(see [Extraction template setup](#extraction-template-setup)).
 
 ---
 
@@ -39,6 +43,8 @@ and **full-text review + voting** (see
 | `full-text/remaining_retrieval_categorized_<date>.csv` | Still-missing records, categorized by retrieval route. |
 | `vote_fulltext_decisions.py` | Casts the full-text Include/Exclude vote (with exclusion reason) for studies already decided at full text. See [Full-text review and voting](#full-text-review-and-voting). |
 | `full-text/full_text_screening_decisions_2026-10-09.csv` | The full-text screening results: one row per Covidence study number, columns `covidence_number,doi,title,decision,exclusion_reason,justification`. |
+| `extraction_template_spec.md` | Literal field-by-field and domain-by-domain record of the Data Extraction and Quality Assessment templates as built in Covidence. See [Extraction template setup](#extraction-template-setup). |
+| `Infant_Microbiome_Codebook.docx` | Human-readable extraction instructions (not just field names) matching the spec above — the document an extractor actually reads while working a study. Also published as an artifact; link in [Extraction template setup](#extraction-template-setup). |
 | `requirements.txt` | Python dependencies. |
 | `.env.example` | Template for your local credentials file. |
 | `.gitignore` | Keeps `.env`, virtual environments, logs, and downloaded PDFs out of version control. |
@@ -883,3 +889,107 @@ named file (e.g. `.env.alaa`), passed via `--env-file` — never share or overwr
 reviewer's `.env` with another's. `vote_fulltext_decisions.log` and `vote_fulltext_logs/`
 (per-vote screenshots) are runtime artifacts excluded from version control, same as the other
 stages' logs.
+
+---
+
+## Extraction template setup
+
+Picks up where full-text review leaves off: once all 233 full-text-stage records are decided
+(111 Include, 122 Exclude, 0 remaining), the 111 included studies need a Data Extraction
+template and a Quality Assessment template before anyone can start pulling data out of them.
+Unlike the three stages above, this one has no repeatable script — it's a one-time template
+*configuration*, done by hand in Covidence's own template editor via browser automation. What's
+captured here instead of a script is a literal spec of what was built, so the template is
+reconstructable or auditable without re-deriving it from conversation history.
+
+**Context:** same review (818465, *"microbiome_methodologies"*). Built 15 Oct 2026.
+
+### Files in this stage
+
+| File | Purpose |
+|---|---|
+| `extraction_template_spec.md` | Field-by-field and domain-by-domain record of exactly what was configured: every custom field added to the Data Extraction template's Methods/Population/Interventions/Outcomes sections, and all 17 Quality Assessment domains with their judgement scales. |
+| `Infant_Microbiome_Codebook.docx` | The field-by-field *instructions* (not just names) an extractor actually works from — what each field means, how to record it, and the review's standing conventions (`NOT REPORTED` for anything a study doesn't state, 20%-duplicate-extraction-then-verify). Also published as an artifact: https://claude.ai/code/artifact/8e611129-8251-461b-84be-245e35421faf |
+
+### What was built
+
+Covidence's Extraction 1 template type (not Extraction 2) — chosen because the review has a
+defined comparator structure (breastfed vs. formula-fed vs. mixed/combination feeding) in
+every included study, even though synthesis is narrative/vote-counting, not meta-analytic.
+Extraction 1 explicitly supports qualitative result capture, not only numeric pooling, so the
+narrative-synthesis choice doesn't disqualify it.
+
+**Data Extraction Template** — 5 sections, full breakdown in `extraction_template_spec.md`:
+Identification (unchanged defaults), Methods (6 custom fields, including the review's own
+study-design classification — see Known issue #2 below), Population (13 custom fields,
+including the 4-part race/ethnicity/ancestry construct), Interventions (3 feeding-mode groups
+with verbatim-definition/classification/ascertainment detail fields replacing Covidence's
+drug-trial Dose/Frequency defaults), Outcomes (9 outcomes, all set to Qualitative result type:
+alpha/beta diversity, 5 named taxa individually, other differentially abundant taxa,
+functional outcomes).
+
+**Quality Assessment Template** — custom (Covidence's only built-in preset is Cochrane RoB1;
+neither RoB 2 nor ROBINS-I is offered as a preset), 17 domains: 5 RoB 2 domains for RCTs
+(Low/Some concerns/High), 7 ROBINS-I domains for observational studies (Low/Moderate/Serious/
+Critical/No information), and 5 microbiome-methods checklist domains applying to every study
+regardless of design (Yes/No/Not reported). The checklist isn't a convenience add-on —
+`protocol.md`'s Risk of bias paragraph specifies it directly, assessed with the same
+dual-reviewer-plus-adjudication rigor as RoB 2/ROBINS-I, added to close a gap the live
+PROSPERO record (CRD420261485879) already claimed was covered.
+
+### How this stage was done
+
+No script — built directly in Covidence's template editor via browser automation (click,
+type, verify via screenshot), the same way a human would, just faster and logged. For each
+field: add it, type the name (controlled vocabulary embedded in the label text, since
+Covidence's "Additional data" fields have no native dropdown/checkbox type), verify via
+screenshot, move to the next. For Quality Assessment domains: add one, set its name and
+judgement scale, then duplicate it for the next domain sharing that scale (all 5 RoB 2 domains
+share Low/Some concerns/High; all 7 ROBINS-I domains and all 5 checklist domains likewise share
+their own scale) — duplicating and renaming is faster and less error-prone than typing each
+judgement option from scratch per domain.
+
+### Known issues / gotchas found building this
+
+#### 1. "Additional data" fields don't auto-save — nothing persists until Publish is clicked
+
+**Symptom:** after building out Methods, Population, Interventions, and Outcomes in one
+sitting, attempting to navigate away triggered a browser "Leave site?" unsaved-changes
+warning. Opening the same template fresh in a second tab (a genuine server round-trip, not
+cached state) showed Methods/Population's custom fields reverted to empty and
+Interventions/Outcomes reverted to "Set Up" (unconfigured) — none of it had actually reached
+the server.
+
+**Root cause:** Covidence's template editor holds field-level edits in client-side state only;
+there is no per-field autosave on blur, contrary to how most inline-editable UIs behave.
+**Publish template** is the only commit action for the template *structure* itself (distinct
+from per-study extraction data, which does autosave once extraction begins).
+
+**The fix:** click Publish template to commit, confirmed via the same fresh-tab check
+afterward (all fields present, "Published less than a minute ago by Philip" shown). Worth
+remembering for any future template edit: changes sit in memory, unprotected, until published.
+
+#### 2. The built-in "Study design" field is fixed, not editable, and has no cross-sectional option
+
+**Symptom:** planned to edit Covidence's default Study design dropdown to the review's own six
+design categories (including cross-sectional, needed for the RoB-tool branch decision).
+Clicking its info icon opened a static list, not an editable options editor.
+
+**Root cause:** the built-in Study design field in Extraction 1's Methods section is a fixed
+system field — its option list (Randomised controlled trial / Case-control study / Cluster
+RCT / Controlled interrupted time series / Historically controlled trial / Prospective cohort
+study / Retrospective cohort study / Other) is not configurable, and it has no cross-sectional
+option at all.
+
+**The fix:** added a separate custom field, "Study design — review classification, governs RoB
+tool," carrying the review's own exact six categories, and left the built-in field checked but
+not authoritative. Documented in `extraction_template_spec.md` and the codebook so extractors
+know which field actually decides the RoB 2/ROBINS-I branch.
+
+### What's not here
+
+No PDFs, no extracted data, no actual RoB/checklist judgements — this stage is template
+*setup* only. 111 included studies are ready for extraction; 0 extracted as of 15 Oct 2026. The
+per-outcome result-table columns (e.g. a custom "Direction of effect" column carrying the
+review's four-way higher-in-breastfed/higher-in-formula-fed/no-difference/not-estimable scale)
+also aren't built out yet — worth doing before extraction starts at volume.
