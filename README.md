@@ -3,13 +3,14 @@
      width="700"
      style="display: block; margin: 1 auto;">
 
-Automates and documents four stages of a [Covidence](https://www.covidence.org/)
+Automates and documents five stages of a [Covidence](https://www.covidence.org/)
 systematic-review project, one study at a time: applying pre-computed title/abstract screening
 decisions, retrieving + attaching full-text PDFs for studies that passed title/abstract
 screening, casting the full-text Include/Exclude vote (with its exclusion reason) once a study
-has been read and decided at full text — all three via browser automation (Playwright) — and
+has been read and decided at full text — all three via browser automation (Playwright) —
 building the review's Data Extraction and Quality Assessment templates in Covidence itself (a
-one-time UI configuration, documented here as a reproducible spec rather than a script).
+one-time UI configuration, documented here as a reproducible spec rather than a script), and the
+20%-sample duplicate-extraction calibration check that followed.
 
 **Context:** built for a systematic review on breastfeeding vs. formula feeding and the
 infant gut microbiome (PROSPERO CRD420261485879, Covidence review 818465,
@@ -21,11 +22,12 @@ and the automation (or spec, where there's no automation to capture) that applie
 the bugs found and fixed along the way, so the process is reproducible and the failure modes
 are documented.
 
-This README covers all four stages: **title/abstract screening** (below), **full-text
+This README covers all five stages: **title/abstract screening** (below), **full-text
 retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-and-upload)),
 **full-text review + voting** (see
-[Full-text review and voting](#full-text-review-and-voting)), and **extraction template setup**
-(see [Extraction template setup](#extraction-template-setup)).
+[Full-text review and voting](#full-text-review-and-voting)), **extraction template setup**
+(see [Extraction template setup](#extraction-template-setup)), and the **calibration agreement
+check** (see [Calibration agreement check](#calibration-agreement-check)).
 
 ---
 
@@ -45,6 +47,8 @@ retrieval + upload** (see [Full-text retrieval and upload](#full-text-retrieval-
 | `full-text/full_text_screening_decisions_2026-10-09.csv` | The full-text screening results: one row per Covidence study number, columns `covidence_number,doi,title,decision,exclusion_reason,justification`. |
 | `extraction_template_spec.md` | Literal field-by-field and domain-by-domain record of the Data Extraction and Quality Assessment templates as built in Covidence. See [Extraction template setup](#extraction-template-setup). |
 | `Infant_Microbiome_Codebook.docx` | Human-readable extraction instructions (not just field names) matching the spec above — the document an extractor actually reads while working a study. Also published as an artifact; link in [Extraction template setup](#extraction-template-setup). |
+| `extraction/calibration_agreement_comparison.md` | Full field-by-field, study-by-study inter-rater agreement analysis for the 20% duplicate-extraction calibration sample (23 studies). See [Calibration agreement check](#calibration-agreement-check). |
+| `extraction/Calibration_Agreement_Report.docx` | Formatted report version of the same analysis, for documentation/manuscript use. |
 | `requirements.txt` | Python dependencies. |
 | `.env.example` | Template for your local credentials file. |
 | `.gitignore` | Keeps `.env`, virtual environments, logs, and downloaded PDFs out of version control. |
@@ -993,3 +997,75 @@ No PDFs, no extracted data, no actual RoB/checklist judgements — this stage is
 per-outcome result-table columns (e.g. a custom "Direction of effect" column carrying the
 review's four-way higher-in-breastfed/higher-in-formula-fed/no-difference/not-estimable scale)
 also aren't built out yet — worth doing before extraction starts at volume.
+
+## Calibration agreement check
+
+Picks up where [Extraction template setup](#extraction-template-setup) leaves off: once the
+templates were published, the review's own protocol (duplicate-extract a 20% sample, then
+single-extraction-with-verification for the rest) called for an actual calibration run before
+extracting the remaining 80% of the 111 included studies at volume. This stage is that run.
+
+**Context:** same review (818465, *"microbiome_methodologies"*). 20%-sample extraction and
+agreement analysis done 15–16 Oct 2026.
+
+### Files in this stage
+
+| File | Purpose |
+|---|---|
+| `extraction/calibration_agreement_comparison.md` | The full analysis: a per-field summary table (34 fields × 23 studies, 782 field-comparisons), the overall agreement rate, 13 individually-quoted notable disagreements (5 of them verified directly against each paper's own source text/tables), cross-field patterns, and a dedicated cross-check of a two-paper (VDAART) cross-study contradiction both extractors independently caught. |
+| `extraction/Calibration_Agreement_Report.docx` | The same content as a formatted Word report (title page, Methods, Results, Appendix with per-study FA/PA/DA grids), intended for the eventual manuscript's Methods/Data Extraction subsection and as a standalone audit artifact. |
+
+### What was done
+
+Two reviewers ("Philip" and "Alaa") independently extracted the same random 20% sample (23 of
+111 included studies, seed 20261016) against the full 34-field extraction spec. Alaa's pass was
+genuinely blind — produced with no access to Philip's draft, using a fresh agent session with no
+shared context, not merely a second read of the same work. Each of the 782 resulting
+field-comparisons was scored Full agreement / Partial agreement / Disagreement / Not comparable.
+**Result: 98.6% full-or-partial agreement (711 full + 60 partial of 782), 90.9% full agreement.**
+A sample of the disagreements was then independently verified against the underlying source
+papers (not against either draft's self-description), finding 5 genuine, source-confirmable
+factual errors: 4 in Philip's draft, 1 in Alaa's — an asymmetry worth noting for a future
+verification pass, but not grounds to prefer either extractor's reading by default.
+
+This exercise is also what prompted two protocol-level refinements already adopted ahead of
+full-corpus extraction and documented in `protocol.md` / `Infant_Microbiome_Codebook.docx`: a
+dedicated 3-way scale for beta diversity (it didn't fit the 4-way direction-of-effect scale used
+for scalar outcomes), and a standing rule for classifying "hybrid-design" studies (RCT between
+formula arms + non-randomized breastfed reference group) by the comparison actually extracted,
+not the paper's own registered randomization.
+
+### Known issues / gotchas found during this stage
+
+#### 1. A background comparison agent's closing summary contradicted its own detailed write-up
+
+**Symptom:** the agent that produced the comparison file reported back, in its final
+task-notification summary, that "every source-verified factual error... was in Philip's draft,
+never Alaa's." The file's own Batch 3 finding (the #1236 beta-diversity item) explicitly
+concludes the opposite for that one item — Alaa's characterization was the one that didn't hold
+up, with Philip's reading verified correct.
+
+**Root cause:** the agent's one-line closing summary over-generalized from the pattern in most
+of its findings (4 of 5) without re-checking against its own itemized detail before reporting
+back — a case of the summary drifting from the work, not the work itself being wrong.
+
+**Fix:** always read an agent's actual output file before repeating its closing summary as
+fact, even when the summary sounds confident and specific. The file's own `extraction/
+calibration_agreement_comparison.md` content (the per-finding detail in Section 4, and the
+corrected Section 5 point 4) is the source of truth; it was corrected in place before this report
+and this README section were written, rather than trusting the chat-relayed summary.
+
+#### 2. `soffice` (LibreOffice) is not installed in this environment
+
+**Symptom:** the standard docx-skill verification step (`soffice --headless --convert-to pdf`,
+then render to images) fails with `FileNotFoundError: soffice`.
+
+**Fix:** fall back to `pandoc -t markdown file.docx` to extract and spot-check the full text
+content (headings present, corrected findings present verbatim, table structure intact, per-study
+appendix complete) instead of a visual render. Confirms correctness of content and structure, not
+pixel-level layout — note this limitation if a future stage needs guaranteed visual fidelity.
+
+### Security notes
+
+No credentials, API keys, or PHI in these files — this stage is pure text analysis and document
+generation from already-screened, already-extracted study data.
