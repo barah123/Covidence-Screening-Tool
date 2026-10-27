@@ -49,6 +49,11 @@ check** (see [Calibration agreement check](#calibration-agreement-check)).
 | `Infant_Microbiome_Codebook.docx` | Human-readable extraction instructions (not just field names) matching the spec above — the document an extractor actually reads while working a study. Also published as an artifact; link in [Extraction template setup](#extraction-template-setup). |
 | `extraction/calibration_agreement_comparison.md` | Full field-by-field, study-by-study inter-rater agreement analysis for the 20% duplicate-extraction calibration sample (23 studies). See [Calibration agreement check](#calibration-agreement-check). |
 | `extraction/Calibration_Agreement_Report.docx` | Formatted report version of the same analysis, for documentation/manuscript use. |
+| `fill_quality_assessment.py` | Casts Quality Assessment (ROBINS-I / RoB 2 + the 5-domain microbiome-methods checklist) judgements into Covidence from a locally-drafted Section J block. See [Quality assessment at volume](#quality-assessment-at-volume). |
+| `extraction/_manifest.csv` | covidence_number → doi/title/source-markdown-path lookup for all 111 included studies; used to search Covidence by the paper's actual title rather than an author-year label. |
+| `extraction/_volume_progress.csv` | Per-study tracker for the 88 post-calibration studies: assigned reviewer, and whether Section J is drafted / filled into Covidence. |
+| `extraction/volume_qa_draft.md` | Philip's 44 Section J blocks (44/44 drafted and filled). |
+| `extraction/volume_qa_draft_alaa.md` | Alaa's 44 Section J blocks (43/44 drafted and filled — see [Known issues #2](#2-a-cross-reviewer-in-progress-lock-blocks-a-second-reviewers-assessment)). |
 | `requirements.txt` | Python dependencies. |
 | `.env.example` | Template for your local credentials file. |
 | `.gitignore` | Keeps `.env`, virtual environments, logs, and downloaded PDFs out of version control. |
@@ -1069,3 +1074,213 @@ pixel-level layout — note this limitation if a future stage needs guaranteed v
 
 No credentials, API keys, or PHI in these files — this stage is pure text analysis and document
 generation from already-screened, already-extracted study data.
+
+---
+
+## Quality assessment at volume
+
+Picks up where [Extraction template setup](#extraction-template-setup) and the [Calibration
+agreement check](#calibration-agreement-check) leave off: with the Quality Assessment template
+published and the 20% calibration sample's own Quality Assessment already done by the same
+mechanism below, the remaining 88 included studies (111 total minus the 23-study calibration
+sample) still needed their Quality Assessment (Section J: Risk of bias) cast into Covidence.
+As with the full-text voting stage, *forming* each judgement is the reasoning step — done once
+per study by reading the paper's actual Methods/Results text — and *casting* it into
+Covidence's click-heavy, screenshot-verified UI is the repetitive step this script automates.
+
+**Context:** same review (818465, *"microbiome_methodologies"*). The 88 studies were split
+into two 44-study halves (Philip, Alaa) and worked in small batches (2 studies at a time) from
+15 Oct through 27 Oct 2026.
+
+### Files in this stage
+
+| File | Purpose |
+|---|---|
+| `fill_quality_assessment.py` | Main script. Parses a study's `### J. Risk of bias` markdown block, resolves its Covidence study id by title search, and casts each domain's judgement + reasoning via the Quality Assessment form's Playwright DOM. |
+| `extraction/_manifest.csv` | covidence_number → doi/title/source-markdown-path for all 111 included studies. Used to search Covidence by the paper's *actual* title, not the local draft's author-year heading label (see [Known issues #1](#1-searching-by-author-year-heading-label-instead-of-actual-title-is-unreliable)). |
+| `extraction/_volume_progress.csv` | Tracker: one row per study, with `assigned_to` (Philip/Alaa), `section_j_drafted`, and `qa_in_covidence`, updated after each successful fill. |
+| `extraction/volume_qa_draft.md` | Philip's 44 Section J blocks. 44/44 drafted and filled. |
+| `extraction/volume_qa_draft_alaa.md` | Alaa's 44 Section J blocks. 43/44 drafted and filled — the last one, #1988, is blocked by a cross-reviewer lock, see [Known issues #2](#2-a-cross-reviewer-in-progress-lock-blocks-a-second-reviewers-assessment). |
+
+### Section J format
+
+Each study gets a `## #<covidence_number> — <short label> (<country>)` heading, a short
+italic design-context paragraph (noting anything that affects which RoB tool applies or how a
+domain should be read — e.g. a "hybrid design" where an RCT between formula arms is paired
+with a non-randomized breastfed reference group, classified by the comparison actually
+extracted rather than the paper's own registered randomization), then a `### J. Risk of bias`
+block with a provenance note, a "RoB tool applicable" field, a 5-or-7-row ROBINS-I/RoB 2 table,
+and the 5-row microbiome-methods checklist table (sample collection & storage / DNA extraction
+/ sequencing depth / contamination controls / compositional-data handling, each Yes/No/Not
+reported) that applies to every study regardless of design. `parse_section_j()` extracts
+`(domain, judgment, reasoning)` triples from the two tables by matching each row's middle
+column against the review's fixed vocabulary of 10 judgment words (`Low`/`Moderate`/.../`Not
+reported`) — this is what lets one regex safely skip header/separator rows and the *other*
+tool's left-blank table (every study uses exactly one of ROBINS-I/RoB 2, never both) without
+tracking which sub-table a row came from.
+
+### Prerequisites (quality-assessment-at-volume stage)
+
+Same as [Prerequisites](#prerequisites) above, plus: the Data Extraction and Quality
+Assessment templates must already be published for this review (see [Extraction template
+setup](#extraction-template-setup)), and the reviewer's Covidence account must have Quality
+Assessment voting permission.
+
+### Usage (quality-assessment-at-volume stage)
+
+#### 1. Dry run — zero risk
+
+```bash
+python3 fill_quality_assessment.py --dry-run --only-cns "#1499"
+```
+
+Navigates, parses, and compares only — writes nothing, clicks nothing except panel
+expand/collapse. Rehearse against a study already fully assessed by hand first: every domain
+should report "already matches local draft — skipping."
+
+#### 2. One real domain, capped
+
+```bash
+python3 fill_quality_assessment.py --only-cns "#1536" --limit-domains 1
+```
+
+Casts exactly one real judgement, never clicks Complete. Open the record in Covidence
+afterward and confirm the judgement + reasoning text landed correctly before trusting the
+rest.
+
+#### 3. Full run for a batch
+
+```bash
+python3 fill_quality_assessment.py --draft-md extraction/volume_qa_draft_alaa.md \
+    --only-cns "#3116,#3211" --env-file .env.alaa
+```
+
+`--draft-md` points at whichever file has the batch's Section J blocks (default is the 20%
+calibration file); `--only-cns` limits the run to specific studies (default: every `## #N —
+...` heading in that file); `--env-file` selects the reviewer (see Multi-reviewer usage
+below). Worked in small batches (2 studies at a time) throughout this project, not because the
+script requires it, but because each batch's judgements were being freshly drafted and
+parse-checked immediately beforehand.
+
+### Multi-reviewer usage (quality-assessment-at-volume stage)
+
+Same pattern as [the full-text review stage](#multi-reviewer-usage): a second reviewer's own
+named `.env` file, passed via `--env-file`, casts *their own* independent Quality Assessment —
+Covidence tracks each reviewer's assessment on a study separately.
+
+```bash
+python3 fill_quality_assessment.py --draft-md extraction/volume_qa_draft_alaa.md --env-file .env.alaa --dry-run
+python3 fill_quality_assessment.py --draft-md extraction/volume_qa_draft_alaa.md --env-file .env.alaa --only-cns "#1011,#1020"
+```
+
+### How it works (quality-assessment-at-volume stage)
+
+For each study in the draft file (or each one named by `--only-cns`):
+
+1. Parse its `### J. Risk of bias` block into `(domain, judgment, reasoning)` rows and infer
+   whether it's a ROBINS-I or RoB 2 study from which tool-specific domain names are present
+   (needed because "Selection of the reported result" is the one domain name both tools share
+   verbatim — disambiguated by requiring the panel heading to also contain the inferred tool
+   name).
+2. Resolve the study's Covidence internal id by searching its *actual* title (from the
+   manifest) and reading the id out of either a direct single-match redirect's query string,
+   or a path segment in a result-list link whose own `#<covidence_number>` prefix matches.
+3. Open `https://app.covidence.org/studies/<id>/risk_of_bias_assessments`. For each parsed
+   domain: find its panel by heading text, read any existing judgement (skip if it already
+   matches; stop and flag the whole study if it conflicts with the local draft — never
+   silently overwrite another reviewer's work); if unjudged, expand the panel, click the
+   judgement's `label[for=decision_<word>]` (the underlying radio input is `display:none`;
+   the visible label is the real clickable control), fill the reasoning textarea, and Save.
+4. Once every domain in the local draft is filled or already matched, click Complete (and its
+   confirmation dialog, which Covidence always shows since only one of the two
+   ROBINS-I/RoB 2 tools' domains is ever filled on a given study).
+
+### Known issues / troubleshooting history (quality-assessment-at-volume stage)
+
+#### 1. Searching by author-year heading label instead of actual title is unreliable
+
+**Symptom:** confirmed live 2026-10-24 — searching Covidence for "Wopereis" (from a draft
+heading label like "Wopereis 2018 (Australia/Singapore/England/Ireland)") returned 286
+loosely-related results, and the real record (#1643) wasn't reliably among the ones actually
+inspected. A rarer surname happening to narrow the search enough was luck, not a working
+method.
+
+**Root cause:** Covidence's search is a loose text match, not an id lookup — a common surname
+alone is nowhere near specific enough, and the draft files' own section headings only ever
+carry a short author-year-country label, not the paper's real title.
+
+**The fix:** look up each study's actual title from `extraction/_manifest.csv` (keyed by
+covidence_number) and search on that instead of the heading label, falling back to the label
+only when a study has no manifest entry.
+
+#### 2. A cross-reviewer "in progress" lock blocks a second reviewer's assessment
+
+**Symptom:** filling study #1988 under Alaa's login redirected to
+`.../review_studies/included?filter=ready_for_extraction` with the banner "This study is
+already in progress. Please choose another," and every domain then failed with
+`panel_not_found`.
+
+**Root cause:** Covidence locks a study's Quality Assessment form to whichever reviewer
+already has an "In progress" (started-but-not-completed) assessment open on it — confirmed
+live 2026-10-27 that #1988's own card shows Reviewer "Philip" with a Quality Assessment form
+not yet marked Completed, even though #1988 is in *Alaa's* assigned half of the volume split.
+A second reviewer's own batch assignment doesn't override this.
+
+**The fix:** none attempted, by design — this needs a human decision (the blocking reviewer
+completes or abandons their in-progress assessment, or the study is reassigned), not something
+a script should force past. `fill_quality_assessment.py` correctly reports `panel_not_found`
+for every domain on a locked study rather than guessing; as of this writing #1988 remains the
+one study (of 111 included) without a completed Quality Assessment.
+
+#### 3. A "/" character in a search query breaks Covidence's search — and one failure mode is a silent wrong-study match
+
+**Symptom:** searching for study #1215's title ("...short/branched chain fatty acids...")
+returned "No results found" even though the record exists. While diagnosing this, a related,
+more dangerous failure mode was also found: a short/generic query can instead redirect to the
+*default-selected record in some other filtered list* (e.g. an "Irrelevant" tab) — a URL shape
+indistinguishable, by pattern alone, from a genuine single-match redirect.
+
+**Root cause:** Covidence's search endpoint breaks on a literal "/" in the query string. The
+earlier code's single-redirect-trust check (`"/search" not in page.url`) had no way to tell a
+genuine single match apart from this kind of fallback redirect, which would have let the
+wrong study's id be silently returned as if it were a confirmed match.
+
+**The fix:** two changes to `find_study_id()` — strip "/" from the query before building the
+search URL (confirmed via grep that #1215 is the only manifest title containing one, so this
+is a scoped, safe fix), and require the expected `#<covidence_number>` text to actually appear
+in the resolved page's body before trusting a single-redirect id, not just the URL shape.
+Verified afterward: #1215 resolves correctly once the "/" is stripped.
+
+### CSV schema (quality-assessment-at-volume stage)
+
+`extraction/_volume_progress.csv`:
+
+| Column | Description |
+|---|---|
+| `covidence_number` | The study's Covidence reference number (e.g. `#1011`) |
+| `doi` | DOI |
+| `title` | Record title |
+| `assigned_to` | `Philip` or `Alaa` — which reviewer's half of the 88-study volume split this study belongs to |
+| `a_i_drafted` | Whether Sections A–I (full data extraction) have been drafted — out of scope for this stage, deferred per a 26 Oct 2026 project decision to do Quality Assessment first |
+| `section_j_drafted` | Whether the Section J (Risk of bias) markdown block has been written locally |
+| `data_extraction_in_covidence` | Whether Sections A–I have been entered into Covidence — not yet started for any study |
+| `qa_in_covidence` | Whether Quality Assessment has been filled into Covidence via this script |
+| `notes` | Free text, e.g. flagging #1988's cross-reviewer lock |
+
+### What's not here
+
+Sections A–I (the actual data extraction — population, exposure, profiling method,
+composition/functional outcomes, etc.) are explicitly out of scope for this stage per project
+decision; 0 of 111 included studies have been extracted as of this writing. This stage is
+Quality Assessment (Section J) only — **110 of 111 included studies now have a completed
+Quality Assessment in Covidence** (87 of 88 volume-rollout studies plus the 23-study
+calibration sample), with #1988 the sole remaining exception pending the cross-reviewer lock
+above.
+
+### Security notes (quality-assessment-at-volume stage)
+
+Same as [Security notes](#security-notes) above: per-reviewer credentials live in their own
+named `.env.<reviewer>` file, excluded from version control by `.gitignore`, never shared or
+overwritten across reviewers. `fill_quality_assessment.log` and `fill_qa_logs/`
+(per-domain-failure screenshots/page-text) are runtime artifacts excluded from version control,
+same as the other stages' logs.

@@ -18,12 +18,16 @@ upload_full_texts.log
 retrieve_remaining_full_texts.log
 download_blocked_oa_pdfs.log
 vote_fulltext_decisions.log
+fill_quality_assessment.log
 
 # Downloaded full-text PDFs -- retrievable by re-running the pipeline, not redistributed here
 full-text/open-access-*/
 
 # Per-vote screenshots/page-text from the full-text review stage -- local diagnostics, regenerated each run
 vote_fulltext_logs/
+
+# Per-domain-failure screenshots/page-text from the quality-assessment-at-volume stage
+fill_qa_logs/
 
 # OS cruft
 .DS_Store
