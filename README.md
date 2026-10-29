@@ -1100,7 +1100,7 @@ into two 44-study halves (Philip, Alaa) and worked in small batches (2 studies a
 | `extraction/_manifest.csv` | covidence_number → doi/title/source-markdown-path for all 111 included studies. Used to search Covidence by the paper's *actual* title, not the local draft's author-year heading label (see [Known issues #1](#1-searching-by-author-year-heading-label-instead-of-actual-title-is-unreliable)). |
 | `extraction/_volume_progress.csv` | Tracker: one row per study, with `assigned_to` (Philip/Alaa), `section_j_drafted`, and `qa_in_covidence`, updated after each successful fill. |
 | `extraction/volume_qa_draft.md` | Philip's 44 Section J blocks. 44/44 drafted and filled. |
-| `extraction/volume_qa_draft_alaa.md` | Alaa's 44 Section J blocks. 43/44 drafted and filled — the last one, #1988, is blocked by a cross-reviewer lock, see [Known issues #2](#2-a-cross-reviewer-in-progress-lock-blocks-a-second-reviewers-assessment). |
+| `extraction/volume_qa_draft_alaa.md` | Alaa's 44 Section J blocks. 44/44 drafted and filled — the last one, #1988, was briefly blocked by a cross-reviewer lock, see [Known issues #2](#2-a-cross-reviewer-in-progress-lock-blocks-a-second-reviewers-assessment). |
 
 ### Section J format
 
@@ -1226,11 +1226,12 @@ live 2026-10-27 that #1988's own card shows Reviewer "Philip" with a Quality Ass
 not yet marked Completed, even though #1988 is in *Alaa's* assigned half of the volume split.
 A second reviewer's own batch assignment doesn't override this.
 
-**The fix:** none attempted, by design — this needs a human decision (the blocking reviewer
-completes or abandons their in-progress assessment, or the study is reassigned), not something
-a script should force past. `fill_quality_assessment.py` correctly reports `panel_not_found`
-for every domain on a locked study rather than guessing; as of this writing #1988 remains the
-one study (of 111 included) without a completed Quality Assessment.
+**The fix:** none attempted by the script, by design — this needed a human decision, not
+something a script should force past. `fill_quality_assessment.py` correctly reported
+`panel_not_found` for every domain on the locked study rather than guessing, and the lock
+stayed in place until Philip reassigned #1988 to Alaa in Covidence (2026-10-28), at which
+point a dry run immediately confirmed the lock was cleared (all 12 domains resolved instead of
+`panel_not_found`) and the real fill completed normally.
 
 #### 3. A "/" character in a search query breaks Covidence's search — and one failure mode is a silent wrong-study match
 
@@ -1265,17 +1266,17 @@ Verified afterward: #1215 resolves correctly once the "/" is stripped.
 | `section_j_drafted` | Whether the Section J (Risk of bias) markdown block has been written locally |
 | `data_extraction_in_covidence` | Whether Sections A–I have been entered into Covidence — not yet started for any study |
 | `qa_in_covidence` | Whether Quality Assessment has been filled into Covidence via this script |
-| `notes` | Free text, e.g. flagging #1988's cross-reviewer lock |
+| `notes` | Free text, e.g. flagging (and later clearing) #1988's cross-reviewer lock |
 
 ### What's not here
 
 Sections A–I (the actual data extraction — population, exposure, profiling method,
 composition/functional outcomes, etc.) are explicitly out of scope for this stage per project
 decision; 0 of 111 included studies have been extracted as of this writing. This stage is
-Quality Assessment (Section J) only — **110 of 111 included studies now have a completed
-Quality Assessment in Covidence** (87 of 88 volume-rollout studies plus the 23-study
-calibration sample), with #1988 the sole remaining exception pending the cross-reviewer lock
-above.
+Quality Assessment (Section J) only — **all 111 of 111 included studies now have a completed
+Quality Assessment in Covidence** (88 of 88 volume-rollout studies plus the 23-study
+calibration sample), completed 2026-10-28 once #1988's cross-reviewer lock (above) was
+cleared by reassignment.
 
 ### Security notes (quality-assessment-at-volume stage)
 

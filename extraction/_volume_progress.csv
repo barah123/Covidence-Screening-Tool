@@ -77,7 +77,7 @@ covidence_number,doi,title,assigned_to,a_i_drafted,section_j_drafted,data_extrac
 #1899,10.1111/1574-6941.12434,Impact of lifestyle on the gut microbiota of healthy infants and their mothers-the ALADDIN birth cohort.,Alaa,,yes,,yes,
 #1965,10.1007/s11274-013-1404-3,Diversity of the intestinal microbiota in different patterns of feeding infants by Illumina high-throughput sequencing.,Alaa,,yes,,yes,
 #1982,10.1128/AEM.03910-12,"Comparison of the compositions of the stool microbiotas of infants fed goat milk formula, cow milk-based formula, or breast milk.",Alaa,,yes,,yes,
-#1988,10.1503/cmaj.121189,Gut microbiota of healthy Canadian infants: profiles by mode of delivery and infant diet at 4 months.,Alaa,,,,,
+#1988,10.1503/cmaj.121189,Gut microbiota of healthy Canadian infants: profiles by mode of delivery and infant diet at 4 months.,Alaa,,yes,,yes," | Reassigned to Alaa by Philip 2026-10-28, cross-reviewer lock cleared, filled same day."
 #2022,10.1186/gb-2012-13-4-r32,A metagenomic study of diet-dependent interaction between gut microbiota and host in infants reveals differences in immune response.,Alaa,,yes,,yes,
 #2145,10.13343/j.cnki.wsxb.20260127,Comparison of gut microbiome and metabolome characteristics in preterm and full-term infants under different feeding modes,Alaa,,yes,,yes,
 #2772,10.1080/19490976.2023.2231596,Maturation of the gut metabolome during the first year of life in humans,Alaa,,yes,,yes,
